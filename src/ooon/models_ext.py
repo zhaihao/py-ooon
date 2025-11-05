@@ -1,4 +1,8 @@
+from typing import Optional, Callable, Any
+
+import orjson
 from pydantic import BaseModel, model_validator
+from pydantic_core import to_jsonable_python, to_json
 
 
 def deep_get(data: dict, path: str, default=None):
@@ -55,6 +59,8 @@ def deep_get(data: dict, path: str, default=None):
 
 
 class JsonPathModel(BaseModel):
+    __include_computed_fields__ = True
+
     @model_validator(mode="before")
     @classmethod
     def resolve_json_path_aliases(cls, data):
@@ -67,3 +73,49 @@ class JsonPathModel(BaseModel):
             if value is not None:
                 resolved[alias] = value
         return resolved
+
+    def _apply_serializers(self, value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+
+        elif isinstance(value, list):
+            return [self._apply_serializers(v) for v in value]
+
+        elif isinstance(value, dict):
+            return {k: self._apply_serializers(v) for k, v in value.items()}
+
+        return value
+
+    def model_dump(self, **kwargs):
+        data = super().model_dump(**kwargs)
+        for name, field in self.model_fields.items():
+            extra = getattr(field, "json_schema_extra", None) or {}
+            serializer: Callable[[Any], Any] | None = extra.get("serializer")
+            if name not in data:
+                continue
+            value = getattr(self, name)
+            processed = self._apply_serializers(value)
+            if serializer:
+                try:
+                    processed = serializer(processed)
+                except Exception as e:
+                    raise ValueError(f"序列化字段 {name} 时出错: {e}")
+            data[name] = processed
+        return data
+
+    def model_dump_json(self, **kwargs):
+        data = super().model_dump(**kwargs)
+        for name, field in self.model_fields.items():
+            extra = getattr(field, "json_schema_extra", None) or {}
+            serializer: Callable[[Any], Any] | None = extra.get("serializer")
+            if name not in data:
+                continue
+            value = getattr(self, name)
+            processed = self._apply_serializers(value)
+            if serializer:
+                try:
+                    processed = serializer(processed)
+                except Exception as e:
+                    raise ValueError(f"序列化字段 {name} 时出错: {e}")
+            data[name] = processed
+        return orjson.dumps(data).decode()
