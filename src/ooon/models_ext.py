@@ -1,61 +1,14 @@
-from typing import Callable, Any
+from typing import Callable, Any, get_origin
 
 import orjson
 from pydantic import BaseModel, model_validator
-from pydantic.fields import FieldInfo
+from jsonpath_ng.ext import parse
 
 
 def deep_get(data: dict, path: str, default=None):
-    def _flatten(lst):
-        for v in lst:
-            if isinstance(v, list):
-                yield from _flatten(v)
-            else:
-                yield v
-
-    # noinspection PyBroadException
-    try:
-        keys = path.split('.')
-        current = data
-
-        for i, key in enumerate(keys):
-            if current is None:
-                return default
-
-            if key == '*':
-                if not isinstance(current, list):
-                    return default
-
-                remaining_path = '.'.join(keys[i + 1:])
-                if not remaining_path:
-                    return list(_flatten(current))
-
-                results = []
-                for item in current:
-                    val = deep_get(item, remaining_path, default)
-                    if val is not None:
-                        results.append(val)
-                return list(_flatten(results))
-
-            if isinstance(current, dict):
-                if key not in current:
-                    return default
-                current = current[key]
-            elif isinstance(current, list):
-                try:
-                    idx = int(key)
-                    current = current[idx]
-                except (ValueError, IndexError):
-                    return default
-            else:
-                return default
-
-        if isinstance(current, list):
-            current = list(_flatten(current))
-        return current
-
-    except Exception:
-        return default
+    parsed = parse(path)
+    values = [m.value for m in parsed.find(data)]
+    return values
 
 
 class JsonPathModel(BaseModel):
@@ -70,8 +23,16 @@ class JsonPathModel(BaseModel):
         for name, field in cls.model_fields.items():
             alias = field.alias or name
             value = deep_get(data, alias)
-            if value is not None:
-                resolved[alias] = value
+            anno = field.annotation
+            origin = get_origin(anno)
+            if origin is list:
+                if len(value) == 1 and isinstance(value[0], list):
+                    resolved[alias] = value[0]
+                else:
+                    resolved[alias] = value
+            else:
+                resolved[alias] = value[0] if value else None
+
         return resolved
 
     def _apply_serializers(self, value: Any) -> Any:
