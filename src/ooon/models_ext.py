@@ -31,7 +31,8 @@ class JsonPathModel(BaseModel):
                 else:
                     resolved[alias] = value
             else:
-                resolved[alias] = value[0] if value else None
+                if value: # 修复 pydantic 实效的问题
+                    resolved[alias] = value[0]
 
         return resolved
 
